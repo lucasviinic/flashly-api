@@ -2,6 +2,7 @@ from datetime import datetime, timezone
 from typing import List
 
 from fastapi import HTTPException
+from models.flashcard_model import Flashcards
 from models.requests_model import TopicRequest
 from models.topic_model import Topics
 from database import db_dependency
@@ -57,5 +58,6 @@ def delete_topic_usecase(db: db_dependency, topic_id: str) -> None:
     if not topic_model:
         raise HTTPException(status_code=404, detail='topic not found')
     
+    db.query(Flashcards).filter(Flashcards.topic_id == topic_id).delete()
     db.query(Topics).filter(Topics.id == topic_id).delete()
     db.commit()

@@ -3,6 +3,7 @@ from typing import List
 
 from fastapi import HTTPException
 from database import db_dependency
+from models.flashcard_model import Flashcards
 from models.requests_model import SubjectRequest
 from models.subject_model import Subjects
 from models.topic_model import Topics
@@ -94,8 +95,9 @@ def delete_subject_usecase(db: db_dependency, subject_id: str, user_id: str) -> 
     
     if not subject_model:
         raise HTTPException(status_code=404, detail='subject not found')
+        
+    db.query(Flashcards).filter(Flashcards.subject_id == subject_id).delete()
+    db.query(Topics).filter(Topics.subject_id == subject_id).delete()
     
-    subject_model.deleted_at = datetime.now()
-    
-    db.add(subject_model)
+    db.delete(subject_model)    
     db.commit()

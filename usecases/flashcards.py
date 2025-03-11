@@ -143,7 +143,7 @@ def delete_flashcard_usecase(db: db_dependency, user_id: str, flashcard_id: int)
 
     flashcard_model.deleted_at = datetime.now(timezone.utc)
 
-    db.add(flashcard_model)
+    db.delete(flashcard_model)
     db.commit()
 
 def update_flashcard_usecase(db: db_dependency, user_id: str, flashcard_id: int, flashcard_request: FlashcardRequest) -> dict:
