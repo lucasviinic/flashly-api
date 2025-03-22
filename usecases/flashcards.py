@@ -1,9 +1,12 @@
 from datetime import datetime, timezone
+import json
+import os
 from typing import List, Optional, Tuple
 
-from fastapi import HTTPException
+from fastapi import HTTPException, UploadFile
 from sqlalchemy import func
 
+from core.firebase.client import firebase_file_upload
 from models.flashcard_model import Flashcards
 from models.requests_model import FlashcardRequest
 from core.openai import client as openai_client
@@ -72,7 +75,7 @@ def generate_flashcards_usecase(db: db_dependency, content: str, quantity: int, 
     return result
         
         
-def create_flashcard_usecase(db: db_dependency, flashcard_request: FlashcardRequest, user_id: str) -> dict:
+def create_flashcard_usecase(db: db_dependency, flashcard_request: FlashcardRequest, user_id: str, file: UploadFile) -> dict:
     total_flashcards = db.query(Flashcards).filter(
         Flashcards.user_id == user_id,
         Flashcards.deleted_at.is_(None)
@@ -83,15 +86,32 @@ def create_flashcard_usecase(db: db_dependency, flashcard_request: FlashcardRequ
     if total_flashcards >= USER_LIMITS[user.account_type]["flashcards_limit"]:
         raise HTTPException(status_code=400, detail='Flashcard limit reached')
 
-    flashcard_model = Flashcards(**flashcard_request.model_dump())
+    try:
+        flashcard_data = json.loads(flashcard_request)
+        flashcard_model = Flashcards(**flashcard_data)
+    except Exception as e:
+        raise HTTPException(status_code=422, detail=f"Invalid flashcard data: {str(e)}")
     flashcard_model.user_id = user_id
 
     db.add(flashcard_model)
+    db.flush()
+
+    if file:
+        try:
+            image_url = firebase_file_upload(
+                bucket_blob=os.getenv("FIREBASE_FLASHCARD_IMAGE_BLOB"),
+                file_image=file,
+                image_id=str(flashcard_model.id)
+            )
+            flashcard_model.image_url = image_url
+        except Exception as e:
+            db.rollback()
+            raise HTTPException(status_code=500, detail=f"error uploading image: {str(e)}")
+
     db.commit()
     db.refresh(flashcard_model)
 
     result = flashcard_model.to_dict()
-
     return result
 
 def retrieve_all_flashcards_usecase(

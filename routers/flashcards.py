@@ -9,7 +9,7 @@ from usecases.flashcards import create_flashcard_usecase, delete_flashcard_useca
 from utils import constants, pdf_to_text
 from database import db_dependency
 
-from fastapi import APIRouter, Depends, HTTPException, Path, Query, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Path, Query, UploadFile
 
 
 router = APIRouter(
@@ -43,12 +43,17 @@ async def generate_flashcards(
     return {"flashcards": flashcards_list}
 
 @router.post("", status_code=status.HTTP_201_CREATED)
-async def create_flashcards(db: db_dependency, user: user_dependency, flashcard_request: FlashcardRequest):
+async def create_flashcards(
+    db: db_dependency,
+    user: user_dependency,
+    flashcard: str = Form(...),
+    file: UploadFile = File(None)
+):
     if not user:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail='authentication failed')
 
     try:
-        flashcard_created = create_flashcard_usecase(db, flashcard_request, user_id=user.get('id'))
+        flashcard_created = create_flashcard_usecase(db, flashcard, user_id=user.get('id'), file=file)
         response = flashcard_created
     except Exception as e:
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Error creating flashcards: {str(e)}")
