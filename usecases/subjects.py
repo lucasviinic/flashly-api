@@ -5,6 +5,7 @@ from fastapi import HTTPException
 from database import db_dependency
 from models.flashcard_model import Flashcards
 from models.requests_model import SubjectRequest
+from models.session_model import Sessions
 from models.subject_model import Subjects
 from models.topic_model import Topics
 from models.user_model import Users
@@ -98,6 +99,7 @@ def delete_subject_usecase(db: db_dependency, subject_id: str, user_id: str) -> 
         
     db.query(Flashcards).filter(Flashcards.subject_id == subject_id).delete()
     db.query(Topics).filter(Topics.subject_id == subject_id).delete()
+    db.query(Sessions).filter(Sessions.subject_id == subject_id).delete()
     
     db.delete(subject_model)    
     db.commit()
