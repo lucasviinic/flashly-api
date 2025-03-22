@@ -114,6 +114,7 @@ def create_flashcard_usecase(db: db_dependency, flashcard_request: FlashcardRequ
     result = flashcard_model.to_dict()
     return result
 
+
 def retrieve_all_flashcards_usecase(
         db: db_dependency,
         topic_id: str,
@@ -166,26 +167,52 @@ def delete_flashcard_usecase(db: db_dependency, user_id: str, flashcard_id: int)
     db.delete(flashcard_model)
     db.commit()
 
-def update_flashcard_usecase(db: db_dependency, user_id: str, flashcard_id: int, flashcard_request: FlashcardRequest) -> dict:
+
+def update_flashcard_usecase(
+    db: db_dependency,
+    user_id: str,
+    flashcard_id: int,
+    flashcard_request: FlashcardRequest,
+    file: UploadFile = None
+) -> dict:
     flashcard_model = db.query(Flashcards).filter(
         Flashcards.id == flashcard_id,
         Flashcards.user_id == user_id,
-        Flashcards.deleted_at == None
+        Flashcards.deleted_at.is_(None)
     ).first()
 
     if not flashcard_model:
         raise HTTPException(status_code=404, detail='Flashcard not found')
 
-    flashcard_model.question = flashcard_request.question
-    flashcard_model.answer = flashcard_request.answer
-    flashcard_model.difficulty = flashcard_request.difficulty
-    flashcard_model.opened = flashcard_request.opened
-    flashcard_model.image_url = flashcard_request.image_url
-    flashcard_model.updated_at = datetime.now(timezone.utc)
+    try:
+        if isinstance(flashcard_request, str):
+            flashcard_data = json.loads(flashcard_request)
+        else:
+            flashcard_data = flashcard_request.model_dump()
 
-    db.add(flashcard_model)
-    db.commit()
+        for field, value in flashcard_data.items():
+            if hasattr(flashcard_model, field) and value is not None:
+                setattr(flashcard_model, field, value)
 
-    result = flashcard_model.to_dict()
+        flashcard_model.updated_at = datetime.now(timezone.utc)
 
-    return result
+        if file:
+            try:
+                image_url = firebase_file_upload(
+                    bucket_blob=os.getenv("FIREBASE_FLASHCARD_IMAGE_BLOB"),
+                    file_image=file,
+                    image_id=str(flashcard_model.id)
+                )
+                flashcard_model.image_url = image_url
+            except Exception as e:
+                db.rollback()
+                raise HTTPException(status_code=500, detail=f"Error uploading image: {str(e)}")
+
+        db.commit()
+        db.refresh(flashcard_model)
+
+        return flashcard_model.to_dict()
+
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Error updating flashcard: {str(e)}")

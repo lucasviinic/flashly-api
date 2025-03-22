@@ -120,12 +120,18 @@ async def delete_flashcard(user: user_dependency, db: db_dependency, flashcard_i
     return None
 
 @router.put("/{flashcard_id}", status_code=status.HTTP_200_OK)
-async def update_flashcard(user: user_dependency, db: db_dependency, flashcard_request: FlashcardRequest, flashcard_id: str):
+async def update_flashcard(
+    user: user_dependency,
+    db: db_dependency,
+    flashcard_id: str,
+    flashcard: str = Form(...),
+    file: UploadFile = File(None)
+):
     if not user:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail='authentication failed')
 
     try:
-        updated_flashcard = update_flashcard_usecase(db, user.get('id'), flashcard_id, flashcard_request)
+        updated_flashcard = update_flashcard_usecase(db, user.get('id'), flashcard_id, flashcard, file)
         response = updated_flashcard
     except HTTPException as e:
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Error updating flashcard: {str(e.detail)}")
