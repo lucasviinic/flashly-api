@@ -97,9 +97,9 @@ def delete_subject_usecase(db: db_dependency, subject_id: str, user_id: str) -> 
     if not subject_model:
         raise HTTPException(status_code=404, detail='subject not found')
         
+    db.query(Sessions).filter(Sessions.subject_id == subject_id).delete()
     db.query(Flashcards).filter(Flashcards.subject_id == subject_id).delete()
     db.query(Topics).filter(Topics.subject_id == subject_id).delete()
-    db.query(Sessions).filter(Sessions.subject_id == subject_id).delete()
     
     db.delete(subject_model)    
     db.commit()
