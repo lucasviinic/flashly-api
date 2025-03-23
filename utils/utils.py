@@ -7,7 +7,7 @@ from fastapi import HTTPException, UploadFile
 from PIL import Image
 
 
-MAX_FILE_SIZE = 5 * 1024 * 1024  # 5MB
+MAX_FILE_SIZE = 20 * 1024 * 1024  # 5MB
 
 def pdf_to_text(pdf) -> str:
     pdf.seek(0, os.SEEK_END)
