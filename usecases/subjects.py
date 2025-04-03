@@ -2,6 +2,7 @@ from datetime import datetime, timezone
 from typing import List
 
 from fastapi import HTTPException
+from sqlalchemy import func
 from database import db_dependency
 from models.flashcard_model import Flashcards
 from models.requests_model import SubjectRequest
@@ -23,8 +24,22 @@ def retrieve_all_subjects_usecase(db: db_dependency, user_id: str, limit: int, o
     result = []
     
     for subject in subjects:
-        topics = db.query(Topics).filter(Topics.subject_id == subject.id).all()
-        topics_list = [topic.to_dict() for topic in topics]
+        topics_with_count = db.query(
+            Topics,
+            func.count(Flashcards.id).label('count')
+        ).outerjoin(
+            Flashcards,
+            (Flashcards.topic_id == Topics.id) & (Flashcards.deleted_at.is_(None))
+        ).filter(
+            Topics.subject_id == subject.id,
+            Topics.deleted_at.is_(None)
+        ).group_by(Topics.id).all()
+        
+        topics_list = []
+        for topic, count in topics_with_count:
+            topic_dict = topic.to_dict()
+            topic_dict['count'] = count
+            topics_list.append(topic_dict)
         
         result.append({
             "id": subject.id,
