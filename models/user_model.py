@@ -17,6 +17,8 @@ class Users(Base):
     last_payment_date = Column(DateTime)
     subscription_expiry = Column(DateTime)
     refresh_token = Column(String, nullable=True)
+    last_reset_date = Column(DateTime)
+    credits = Column(Integer, nullable=False, default=0)
     created_at = Column(DateTime, default=func.now())
     updated_at = Column(DateTime, default=func.now())
     deleted_at = Column(DateTime)

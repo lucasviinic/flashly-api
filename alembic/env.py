@@ -1,13 +1,23 @@
 from logging.config import fileConfig
 import os
+import sys
 
+from pathlib import Path as PathlibPath
 from sqlalchemy import engine_from_config
 from sqlalchemy import pool
 
 from alembic import context
 
+sys.path.append(str(PathlibPath(__file__).resolve().parent.parent))
+
 from database import Base
 
+from models.user_model import Users
+from models.flashcard_model import Flashcards
+from models.session_flashcards_model import SessionFlashcards
+from models.session_model import Sessions
+from models.subject_model import Subjects
+from models.topic_model import Topics
 # this is the Alembic Config object, which provides
 # access to the values within the .ini file in use.
 config = context.config
@@ -52,6 +62,8 @@ def run_migrations_offline() -> None:
         target_metadata=target_metadata,
         literal_binds=True,
         dialect_opts={"paramstyle": "named"},
+        compare_type=True,
+        compare_server_default=True,
     )
 
     with context.begin_transaction():
