@@ -9,46 +9,34 @@ from sqlalchemy import func
 from core.firebase.client import firebase_file_upload
 from models.flashcard_model import Flashcards
 from models.requests_model import FlashcardRequest
+from models.subject_model import Subjects
 from core.openai import client as openai_client
 from database import db_dependency
 from models.user_model import Users
-from utils.constants import USER_LIMITS
+from services.limit_service import LimitService
 from utils.utils import fragment_text
 
 
 def generate_flashcards_usecase(db: db_dependency, content: str, quantity: int, user_id: str, subject_id: str,
         topic_id: str, difficulty: int = 1) -> List[dict]:
-    
-    total_flashcards = db.query(Flashcards).filter(
-        Flashcards.user_id == user_id,
-        Flashcards.deleted_at.is_(None)
-    ).count()
-
-    total_generated = db.query(Flashcards).filter(
-        Flashcards.user_id == user_id,
-        Flashcards.origin == "ai"
-    ).count()
 
     user = db.query(Users).filter(Users.id == user_id, Users.deleted_at.is_(None)).first()
-    flashcards_limit = USER_LIMITS[user.account_type]["flashcards_limit"]
-    generated_limit = USER_LIMITS[user.account_type]["ai_gen_flashcards_limit"]
+    if not user:
+        raise HTTPException(status_code=404, detail='User not found')
 
-    flashcards_remaining = flashcards_limit - total_flashcards
-    generated_remaining = generated_limit - total_generated
+    limit_service = LimitService(db, user, Flashcards, Subjects)
+    limit_service.check_flashcard_quota(origin='ai', quantity=quantity)
 
-    if flashcards_remaining <= 0:
-        raise HTTPException(status_code=400, detail='Flashcard limit reached')
-    if generated_remaining <= 0:
-        raise HTTPException(status_code=400, detail='AI generated flashcards limit reached')
-    
-    quantity = quantity if quantity <= generated_remaining else generated_remaining
-    
     generated_flashcards = []
     text_fragments = fragment_text(content)
 
     for fragment in text_fragments:
-        flashcards_list = openai_client.flash_card_generator(prompt=fragment,\
-            history=generated_flashcards, quantity=quantity, difficulty=difficulty)
+        flashcards_list = openai_client.flash_card_generator(
+            prompt=fragment,
+            history=generated_flashcards, 
+            quantity=quantity, 
+            difficulty=difficulty
+        )
         generated_flashcards.extend(flashcards_list)
 
     result = []
@@ -76,22 +64,21 @@ def generate_flashcards_usecase(db: db_dependency, content: str, quantity: int, 
         
         
 def create_flashcard_usecase(db: db_dependency, flashcard_request: FlashcardRequest, user_id: str, file: UploadFile) -> dict:
-    total_flashcards = db.query(Flashcards).filter(
-        Flashcards.user_id == user_id,
-        Flashcards.deleted_at.is_(None)
-    ).count()
-
     user = db.query(Users).filter(Users.id == user_id, Users.deleted_at.is_(None)).first()
+    if not user:
+        raise HTTPException(status_code=404, detail='User not found')
 
-    if total_flashcards >= USER_LIMITS[user.account_type]["flashcards_limit"]:
-        raise HTTPException(status_code=400, detail='Flashcard limit reached')
+    limit_service = LimitService(db, user, Flashcards, Subjects)
+    limit_service.check_flashcard_quota(origin='manual', quantity=1)
 
     try:
         flashcard_data = json.loads(flashcard_request)
         flashcard_model = Flashcards(**flashcard_data)
     except Exception as e:
         raise HTTPException(status_code=422, detail=f"Invalid flashcard data: {str(e)}")
+
     flashcard_model.user_id = user_id
+    flashcard_model.origin = 'manual'
 
     db.add(flashcard_model)
     db.flush()
@@ -124,7 +111,7 @@ def retrieve_all_flashcards_usecase(
         difficulties: Optional[List[int]] = None,
         ai_generated: Optional[bool] = None
     ) -> Tuple[List[dict], int]:
-    
+
     query = db.query(Flashcards).filter(
         Flashcards.topic_id == topic_id,
         Flashcards.user_id == user_id,
@@ -133,7 +120,7 @@ def retrieve_all_flashcards_usecase(
 
     if difficulties:
         query = query.filter(Flashcards.difficulty.in_(difficulties))
-    
+
     if ai_generated is not None:
         query = query.filter(Flashcards.origin == "ai")
 
@@ -146,7 +133,7 @@ def retrieve_all_flashcards_usecase(
             query = query.limit(limit)
         if offset is not None:
             query = query.offset(offset)
-    
+
     flashcards = query.all()
     result = [flashcard.to_dict() for flashcard in flashcards]
 
