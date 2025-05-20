@@ -1,5 +1,4 @@
 import os
-from datetime import datetime, date
 from fastapi import HTTPException, UploadFile
 
 from core.firebase.client import firebase_file_upload
@@ -7,10 +6,7 @@ from database import db_dependency
 from models.flashcard_model import Flashcards
 from models.subject_model import Subjects
 from models.user_model import Users
-from utils.constants import USER_LIMITS
-from sqlalchemy import cast, Date
-
-
+from services.limit_service import LimitService
 from utils.utils import validate_file_size
 
 
@@ -20,38 +16,19 @@ def retrieve_user_usecase(db: db_dependency, user_id: str) -> dict:
     if not user_model:
         raise HTTPException(status_code=400, detail='user not found')
 
-    daily_flashcard_limit = USER_LIMITS[user_model.account_type]["flashcards_limit"]
-    flashcards_count = db.query(Flashcards).filter(
-        Flashcards.user_id == user_id,
-        cast(Flashcards.created_at, Date) == date.today()
-    ).count()
-    flashcards_usage = f"{flashcards_count}/{daily_flashcard_limit}"
-
-    ai_gen_flashcards_limit = USER_LIMITS[user_model.account_type]["ai_gen_flashcards_limit"]
-    ai_gen_flashcards_count = db.query(Flashcards).filter(
-        Flashcards.user_id == user_id,
-        Flashcards.origin == 'ai',
-        cast(Flashcards.created_at, Date) == date.today()
-    ).count()
-    ai_gen_flashcards_usage = f"{ai_gen_flashcards_count}/{ai_gen_flashcards_limit}"
-
-    subjects_limit = USER_LIMITS[user_model.account_type]["subjects_limit"]
-    subjects_count = db.query(Subjects).filter(
-        Subjects.user_id == user_id,
-        cast(Subjects.created_at, Date) == date.today()
-    ).count()
-    subjects_usage = f"{subjects_count}/{subjects_limit}"
-
-    if user_model.account_type == 1:
-        flashcards_usage = None
-        ai_gen_flashcards_usage = None
-        subjects_usage = None
-
+    limit_service = LimitService(db, user_model, Flashcards, Subjects)
+    usage = limit_service.get_usage()
+    
     user_data = user_model.to_dict()
-
-    user_data['flashcards_usage'] = flashcards_usage
-    user_data['ai_gen_flashcards_usage'] = ai_gen_flashcards_usage
-    user_data['subjects_usage'] = subjects_usage
+    
+    if user_model.account_type != 1:
+        user_data['flashcards_usage'] = f"{usage['flashcards'][0]}/{usage['flashcards'][1]}"
+        user_data['ai_gen_flashcards_usage'] = f"{usage['ai_flashcards'][0]}/{usage['ai_flashcards'][1]}"
+        user_data['subjects_usage'] = f"{usage['subjects'][0]}/{usage['subjects'][1]}"
+    else:
+        user_data['flashcards_usage'] = None
+        user_data['ai_gen_flashcards_usage'] = None
+        user_data['subjects_usage'] = None
 
     return user_data
     
