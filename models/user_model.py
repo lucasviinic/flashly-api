@@ -14,7 +14,7 @@ class Users(Base):
     picture = Column(String, nullable=True)
     is_active = Column(Boolean, default=True)
     account_type = Column(Integer, nullable=False, default=0)
-    last_payment_date = Column(DateTime)
+    last_payment_date = Column(DateTime) 
     subscription_expiry = Column(DateTime)
     refresh_token = Column(String, nullable=True)
     last_reset_date = Column(DateTime)
