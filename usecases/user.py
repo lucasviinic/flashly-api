@@ -7,6 +7,7 @@ from models.flashcard_model import Flashcards
 from models.subject_model import Subjects
 from models.user_model import Users
 from services.limit_service import LimitService
+from services.subscription_service import SubscriptionService
 from utils.utils import validate_file_size
 
 
@@ -15,6 +16,9 @@ def retrieve_user_usecase(db: db_dependency, user_id: str) -> dict:
 
     if not user_model:
         raise HTTPException(status_code=400, detail='user not found')
+    
+    subscription_service = SubscriptionService(db)
+    user_model = subscription_service.get_user_with_subscription_check(user_id)
 
     limit_service = LimitService(db, user_model, Flashcards, Subjects)
     usage = limit_service.get_usage()

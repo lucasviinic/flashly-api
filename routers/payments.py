@@ -1,11 +1,15 @@
+import os
 from typing import Annotated, List
 from starlette import status
-from fastapi import APIRouter, Depends, HTTPException, Path
+from fastapi import APIRouter, Depends, HTTPException, Path, Query
 from database import db_dependency
 from models.user_model import Users
 from usecases.auth import get_current_user_usecase
 from usecases.payments import process_payment_usecase, add_credits_usecase
 from utils.constants import CREDIT_PACKAGES
+
+from google.oauth2 import service_account
+from googleapiclient.discovery import build
 
 
 router = APIRouter(
@@ -73,4 +77,48 @@ async def purchase_credits(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error processing credit purchase: {str(e)}"
+        )
+
+@router.get("/verify-subscription", status_code=status.HTTP_200_OK)
+async def verify_subscription(
+    user: user_dependency,
+    package_name: str = Query(...),
+    purchase_token: str = Query(...),
+):
+    if not user:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail='authentication failed')
+
+    try:
+        credentials = service_account.Credentials.from_service_account_file(
+            'play-console-validator.json',
+            scopes=['https://www.googleapis.com/auth/androidpublisher']
+        )
+
+        service = build('androidpublisher', 'v3', credentials=credentials)
+
+        result = service.purchases().subscriptionsv2().get(
+            packageName=package_name,
+            token=purchase_token
+        ).execute()
+
+        subscription_state = result.get("subscriptionState")
+        line_items = result.get("lineItems", [])
+        expiry_time_millis = None
+        auto_renewing = None
+
+        if line_items:
+            expiry_time_millis = line_items[0].get("expiryTime")
+            auto_renewing = line_items[0].get("autoRenewingPlan", {}).get("autoRenewEnabled")
+
+        return {
+            "subscriptionState": subscription_state,
+            "autoRenewing": auto_renewing,
+            "expiryTimeMillis": expiry_time_millis,
+            "originalJson": result
+        }
+
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Erro ao verificar assinatura: {str(e)}"
         )
