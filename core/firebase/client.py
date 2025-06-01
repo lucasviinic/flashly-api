@@ -1,6 +1,7 @@
 import os
 import json
 from datetime import datetime, timezone
+from uuid import uuid4
 
 from fastapi import UploadFile
 
@@ -33,9 +34,14 @@ def firebase_file_upload(bucket_blob: str, image_id: str, file_image: UploadFile
     
     compressed_image = compress_image(file_image=file_image, quality=40)
 
-    blob.upload_from_file(compressed_image, content_type=file_image.content_type)
-    blob.make_public()
+    download_token = str(uuid4())
 
-    image_url = f"{blob.public_url}?v={datetime.now(timezone.utc).time()}"
+    blob.metadata = {"firebaseStorageDownloadTokens": download_token}
+    blob.upload_from_file(compressed_image, content_type=file_image.content_type)
+
+    image_url = (
+        f"https://firebasestorage.googleapis.com/v0/b/{bucket.name}/o/"
+        f"{blob.name.replace('/', '%2F')}?alt=media&token={download_token}"
+    )
 
     return image_url

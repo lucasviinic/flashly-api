@@ -9,114 +9,104 @@ from sqlalchemy import func
 from core.firebase.client import firebase_file_upload
 from models.flashcard_model import Flashcards
 from models.requests_model import FlashcardRequest
+from models.subject_model import Subjects
 from core.openai import client as openai_client
 from database import db_dependency
 from models.user_model import Users
-from utils.constants import USER_LIMITS
+from services.limit_service import LimitService
 from utils.utils import fragment_text
 
 
-def generate_flashcards_usecase(db: db_dependency, content: str, quantity: int, user_id: str, subject_id: str,
-        topic_id: str, difficulty: int = 1) -> List[dict]:
-    
-    total_flashcards = db.query(Flashcards).filter(
-        Flashcards.user_id == user_id,
-        Flashcards.deleted_at.is_(None)
-    ).count()
+class FlashcardsUseCase:
+    def __init__(self, db: db_dependency):
+        self.db = db
 
-    total_generated = db.query(Flashcards).filter(
-        Flashcards.user_id == user_id,
-        Flashcards.origin == "ai"
-    ).count()
-
-    user = db.query(Users).filter(Users.id == user_id, Users.deleted_at.is_(None)).first()
-    flashcards_limit = USER_LIMITS[user.account_type]["flashcards_limit"]
-    generated_limit = USER_LIMITS[user.account_type]["ai_gen_flashcards_limit"]
-
-    flashcards_remaining = flashcards_limit - total_flashcards
-    generated_remaining = generated_limit - total_generated
-
-    if flashcards_remaining <= 0:
-        raise HTTPException(status_code=400, detail='Flashcard limit reached')
-    if generated_remaining <= 0:
-        raise HTTPException(status_code=400, detail='AI generated flashcards limit reached')
-    
-    quantity = quantity if quantity <= generated_remaining else generated_remaining
-    
-    generated_flashcards = []
-    text_fragments = fragment_text(content)
-
-    for fragment in text_fragments:
-        flashcards_list = openai_client.flash_card_generator(prompt=fragment,\
-            history=generated_flashcards, quantity=quantity, difficulty=difficulty)
-        generated_flashcards.extend(flashcards_list)
-
-    result = []
-
-    for flashcard in generated_flashcards:
-        flashcard_model = Flashcards()
-
-        flashcard_model.question = flashcard.get('question')
-        flashcard_model.answer = flashcard.get('answer')
-
-        flashcard_model.user_id = user_id
-        flashcard_model.subject_id = subject_id
-        flashcard_model.topic_id = topic_id
-        flashcard_model.difficulty = difficulty
-        flashcard_model.opened = True
-        flashcard_model.origin = 'ai'
-
-        db.add(flashcard_model)
-        db.commit()
-        db.refresh(flashcard_model)
-
-        result.append(flashcard_model.to_dict())
+    def generate_flashcards(
+        self,
+        content: str,
+        quantity: int,
+        user_id: str,
+        subject_id: str,
+        topic_id: str,
+        difficulty: int = 1
+    ) -> List[dict]:
+        user = self._get_user(user_id)
+        limit_service = LimitService(self.db, user, Flashcards, Subjects)
         
-    return result
+        allowed_quantity = limit_service.check_flashcard_quota(origin='ai', quantity=quantity)
         
-        
-def create_flashcard_usecase(db: db_dependency, flashcard_request: FlashcardRequest, user_id: str, file: UploadFile) -> dict:
-    total_flashcards = db.query(Flashcards).filter(
-        Flashcards.user_id == user_id,
-        Flashcards.deleted_at.is_(None)
-    ).count()
+        generated_flashcards = []
+        text_fragments = fragment_text(content)
+        flashcards_created = 0
 
-    user = db.query(Users).filter(Users.id == user_id, Users.deleted_at.is_(None)).first()
-
-    if total_flashcards >= USER_LIMITS[user.account_type]["flashcards_limit"]:
-        raise HTTPException(status_code=400, detail='Flashcard limit reached')
-
-    try:
-        flashcard_data = json.loads(flashcard_request)
-        flashcard_model = Flashcards(**flashcard_data)
-    except Exception as e:
-        raise HTTPException(status_code=422, detail=f"Invalid flashcard data: {str(e)}")
-    flashcard_model.user_id = user_id
-
-    db.add(flashcard_model)
-    db.flush()
-
-    if file:
-        try:
-            image_url = firebase_file_upload(
-                bucket_blob=os.getenv("FIREBASE_FLASHCARD_IMAGE_BLOB"),
-                file_image=file,
-                image_id=str(flashcard_model.id)
+        for fragment in text_fragments:
+            if flashcards_created >= allowed_quantity:
+                break
+                
+            remaining_quantity = allowed_quantity - flashcards_created
+            flashcards_list = openai_client.flash_card_generator(
+                prompt=fragment,
+                history=generated_flashcards,
+                quantity=min(remaining_quantity, quantity),
+                difficulty=difficulty
             )
-            flashcard_model.image_url = image_url
+            
+            flashcards_to_add = flashcards_list[:remaining_quantity]
+            generated_flashcards.extend(flashcards_to_add)
+            flashcards_created += len(flashcards_to_add)
+
+        result = []
+        for flashcard in generated_flashcards:
+            flashcard_model = self._create_flashcard_model(
+                user_id=user_id,
+                subject_id=subject_id,
+                topic_id=topic_id,
+                difficulty=difficulty,
+                origin='ai',
+                question=flashcard.get('question'),
+                answer=flashcard.get('answer'),
+                opened=True
+            )
+            result.append(flashcard_model.to_dict())
+
+        return result
+
+    def create_flashcard(
+        self,
+        flashcard_request: FlashcardRequest,
+        user_id: str,
+        file: UploadFile = None
+    ) -> dict:
+        user = self._get_user(user_id)
+        limit_service = LimitService(self.db, user, Flashcards, Subjects)
+        limit_service.check_flashcard_quota(origin='user', quantity=1)
+
+        try:
+            if isinstance(flashcard_request, str):
+                flashcard_data = json.loads(flashcard_request)
+            else:
+                flashcard_data = flashcard_request.model_dump()
+
+            flashcard_model = self._create_flashcard_model(
+                user_id=user_id,
+                origin='user',
+                **flashcard_data
+            )
+
+            if file:
+                self._handle_file_upload(flashcard_model, file)
+
+            return flashcard_model.to_dict()
+
         except Exception as e:
-            db.rollback()
-            raise HTTPException(status_code=500, detail=f"error uploading image: {str(e)}")
+            self.db.rollback()
+            raise HTTPException(
+                status_code=500,
+                detail=f"Error creating flashcard: {str(e)}"
+            )
 
-    db.commit()
-    db.refresh(flashcard_model)
-
-    result = flashcard_model.to_dict()
-    return result
-
-
-def retrieve_all_flashcards_usecase(
-        db: db_dependency,
+    def retrieve_all_flashcards(
+        self,
         topic_id: str,
         user_id: str,
         limit: Optional[int] = 20,
@@ -124,95 +114,113 @@ def retrieve_all_flashcards_usecase(
         difficulties: Optional[List[int]] = None,
         ai_generated: Optional[bool] = None
     ) -> Tuple[List[dict], int]:
-    
-    query = db.query(Flashcards).filter(
-        Flashcards.topic_id == topic_id,
-        Flashcards.user_id == user_id,
-        Flashcards.deleted_at.is_(None)
-    )
+        query = self.db.query(Flashcards).filter(
+            Flashcards.topic_id == topic_id,
+            Flashcards.user_id == user_id,
+            Flashcards.deleted_at.is_(None)
+        )
 
-    if difficulties:
-        query = query.filter(Flashcards.difficulty.in_(difficulties))
-    
-    if ai_generated is not None:
-        query = query.filter(Flashcards.origin == "ai")
+        if difficulties:
+            query = query.filter(Flashcards.difficulty.in_(difficulties))
 
-    total_count = query.count()
+        if ai_generated is not None:
+            origin = "ai" if ai_generated else "user"
+            query = query.filter(Flashcards.origin == origin)
 
-    if limit is None and offset is None:
-        query = query.order_by(func.random())
-    else:
-        if limit is not None:
-            query = query.limit(limit)
-        if offset is not None:
-            query = query.offset(offset)
-    
-    flashcards = query.all()
-    result = [flashcard.to_dict() for flashcard in flashcards]
+        total_count = query.count()
 
-    return result, total_count
-
-
-def delete_flashcard_usecase(db: db_dependency, user_id: str, flashcard_id: int) -> None:
-    flashcard_model = db.query(Flashcards).filter(
-        Flashcards.id == flashcard_id,
-        Flashcards.user_id == user_id
-    ).first()
-
-    if not flashcard_model:
-        raise HTTPException(status_code=404, detail='Flashcard not found')
-
-    flashcard_model.deleted_at = datetime.now(timezone.utc)
-
-    db.delete(flashcard_model)
-    db.commit()
-
-
-def update_flashcard_usecase(
-    db: db_dependency,
-    user_id: str,
-    flashcard_id: int,
-    flashcard_request: FlashcardRequest,
-    file: UploadFile = None
-) -> dict:
-    flashcard_model = db.query(Flashcards).filter(
-        Flashcards.id == flashcard_id,
-        Flashcards.user_id == user_id,
-        Flashcards.deleted_at.is_(None)
-    ).first()
-
-    if not flashcard_model:
-        raise HTTPException(status_code=404, detail='Flashcard not found')
-
-    try:
-        if isinstance(flashcard_request, str):
-            flashcard_data = json.loads(flashcard_request)
+        if limit is None and offset is None:
+            query = query.order_by(func.random())
         else:
-            flashcard_data = flashcard_request.model_dump()
+            if limit is not None:
+                query = query.limit(limit)
+            if offset is not None:
+                query = query.offset(offset)
 
-        for field, value in flashcard_data.items():
-            if hasattr(flashcard_model, field) and value is not None:
-                setattr(flashcard_model, field, value)
+        flashcards = query.all()
+        result = [flashcard.to_dict() for flashcard in flashcards]
 
-        flashcard_model.updated_at = datetime.now(timezone.utc)
+        return result, total_count
 
-        if file:
-            try:
-                image_url = firebase_file_upload(
-                    bucket_blob=os.getenv("FIREBASE_FLASHCARD_IMAGE_BLOB"),
-                    file_image=file,
-                    image_id=str(flashcard_model.id)
-                )
-                flashcard_model.image_url = image_url
-            except Exception as e:
-                db.rollback()
-                raise HTTPException(status_code=500, detail=f"Error uploading image: {str(e)}")
+    def delete_flashcard(self, user_id: str, flashcard_id: int) -> None:
+        flashcard_model = self._get_flashcard(user_id, flashcard_id)
+        flashcard_model.deleted_at = datetime.now(timezone.utc)
+        self.db.commit()
 
-        db.commit()
-        db.refresh(flashcard_model)
+    def update_flashcard(
+        self,
+        user_id: str,
+        flashcard_id: int,
+        flashcard_request: FlashcardRequest,
+        file: UploadFile = None
+    ) -> dict:
+        flashcard_model = self._get_flashcard(user_id, flashcard_id)
 
-        return flashcard_model.to_dict()
+        try:
+            if isinstance(flashcard_request, str):
+                flashcard_data = json.loads(flashcard_request)
+            else:
+                flashcard_data = flashcard_request.model_dump()
 
-    except Exception as e:
-        db.rollback()
-        raise HTTPException(status_code=500, detail=f"Error updating flashcard: {str(e)}")
+            for field, value in flashcard_data.items():
+                if hasattr(flashcard_model, field) and value is not None:
+                    setattr(flashcard_model, field, value)
+
+            flashcard_model.updated_at = datetime.now(timezone.utc)
+
+            if file:
+                self._handle_file_upload(flashcard_model, file)
+
+            self.db.commit()
+            self.db.refresh(flashcard_model)
+
+            return flashcard_model.to_dict()
+
+        except Exception as e:
+            self.db.rollback()
+            raise HTTPException(
+                status_code=500,
+                detail=f"Error updating flashcard: {str(e)}"
+            )
+
+    def _get_user(self, user_id: str) -> Users:
+        user = self.db.query(Users).filter(
+            Users.id == user_id,
+            Users.deleted_at.is_(None)
+        ).first()
+        if not user:
+            raise HTTPException(status_code=404, detail='User not found')
+        return user
+
+    def _get_flashcard(self, user_id: str, flashcard_id: int) -> Flashcards:
+        flashcard = self.db.query(Flashcards).filter(
+            Flashcards.id == flashcard_id,
+            Flashcards.user_id == user_id,
+            Flashcards.deleted_at.is_(None)
+        ).first()
+        if not flashcard:
+            raise HTTPException(status_code=404, detail='Flashcard not found')
+        return flashcard
+
+    def _create_flashcard_model(self, **kwargs) -> Flashcards:
+        flashcard_model = Flashcards(**kwargs)
+        self.db.add(flashcard_model)
+        self.db.commit()
+        self.db.refresh(flashcard_model)
+        return flashcard_model
+
+    def _handle_file_upload(self, flashcard_model: Flashcards, file: UploadFile) -> None:
+        try:
+            image_url = firebase_file_upload(
+                bucket_blob=os.getenv("FIREBASE_FLASHCARD_IMAGE_BLOB"),
+                file_image=file,
+                image_id=str(flashcard_model.id)
+            )
+            flashcard_model.image_url = image_url
+            self.db.commit()
+        except Exception as e:
+            self.db.rollback()
+            raise HTTPException(
+                status_code=500,
+                detail=f"Error uploading image: {str(e)}"
+            )

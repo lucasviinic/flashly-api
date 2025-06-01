@@ -1,5 +1,4 @@
 import os
-from datetime import datetime, date
 from fastapi import HTTPException, UploadFile
 
 from core.firebase.client import firebase_file_upload
@@ -7,77 +6,146 @@ from database import db_dependency
 from models.flashcard_model import Flashcards
 from models.subject_model import Subjects
 from models.user_model import Users
-from utils.constants import USER_LIMITS
-from sqlalchemy import cast, Date
-
-
+from models.subscription_model import SubscriptionModel
+from services.limit_service import LimitService
+from services.subscription_service import SubscriptionService
 from utils.utils import validate_file_size
 
 
-def retrieve_user_usecase(db: db_dependency, user_id: str) -> dict:
-    user_model = db.query(Users).filter(Users.id == user_id, Users.deleted_at.is_(None)).first()
-
-    if not user_model:
-        raise HTTPException(status_code=400, detail='user not found')
-
-    daily_flashcard_limit = USER_LIMITS[user_model.account_type]["flashcards_limit"]
-    flashcards_count = db.query(Flashcards).filter(
-        Flashcards.user_id == user_id,
-        cast(Flashcards.created_at, Date) == date.today()
-    ).count()
-    flashcards_usage = f"{flashcards_count}/{daily_flashcard_limit}"
-
-    ai_gen_flashcards_limit = USER_LIMITS[user_model.account_type]["ai_gen_flashcards_limit"]
-    ai_gen_flashcards_count = db.query(Flashcards).filter(
-        Flashcards.user_id == user_id,
-        Flashcards.origin == 'ai',
-        cast(Flashcards.created_at, Date) == date.today()
-    ).count()
-    ai_gen_flashcards_usage = f"{ai_gen_flashcards_count}/{ai_gen_flashcards_limit}"
-
-    subjects_limit = USER_LIMITS[user_model.account_type]["subjects_limit"]
-    subjects_count = db.query(Subjects).filter(
-        Subjects.user_id == user_id,
-        cast(Subjects.created_at, Date) == date.today()
-    ).count()
-    subjects_usage = f"{subjects_count}/{subjects_limit}"
-
-    if user_model.account_type == 1:
-        flashcards_usage = None
-        ai_gen_flashcards_usage = None
-        subjects_usage = None
-
-    user_data = user_model.to_dict()
-
-    user_data['flashcards_usage'] = flashcards_usage
-    user_data['ai_gen_flashcards_usage'] = ai_gen_flashcards_usage
-    user_data['subjects_usage'] = subjects_usage
-
-    return user_data
+class UserUseCase:
+    def __init__(self, db: db_dependency):
+        self.db = db
+        self.subscription_service = SubscriptionService()
     
-def update_user_usecase(db: db_dependency, user_id: str, file_picture: UploadFile) -> dict:
-    user_model = db.query(Users).filter(
-        Users.id == user_id,
-        Users.deleted_at.is_(None)
-    ).first()
-
-    if not user_model:
-        raise HTTPException(status_code=404, detail='user not found')
+    def _get_user_by_id(self, user_id: str) -> Users:
+        user_model = self.db.query(Users).filter(
+            Users.id == user_id, 
+            Users.deleted_at.is_(None)
+        ).first()
+        
+        if not user_model:
+            raise HTTPException(status_code=400, detail='user not found')
+        
+        return user_model
     
-    if not file_picture.content_type.startswith("image/"):
-        raise HTTPException(status_code=400, detail="the uploaded file is not an image")
+    def _get_user_subscription(self, user_id: str) -> SubscriptionModel:
+        return self.db.query(SubscriptionModel).filter(
+            SubscriptionModel.user_id == user_id,
+            SubscriptionModel.deleted_at.is_(None)
+        ).first()
     
-    if validate_file_size(file_obj=file_picture.file, max_size_mb=5):
-        raise HTTPException(status_code=400, detail=f"the file exceeds the maximum allowed size of 5MB")
+    def _verify_subscription_with_google(self, subscription_model: SubscriptionModel) -> tuple[dict, dict]:
+        if not subscription_model or not subscription_model.purchase_token or not subscription_model.package_name:
+            return None, None
+        
+        try:
+            is_active = self.subscription_service.check_subscription_active(
+                subscription_model.package_name, 
+                subscription_model.purchase_token
+            )
+            
+            if not is_active:
+                return None, None
+            
+            subscription_data_obj, subscription_status_obj = self.subscription_service.get_complete_subscription_info(
+                subscription_model.package_name,
+                subscription_model.purchase_token
+            )
+            
+            subscription_data = {
+                'package_name': subscription_data_obj.package_name,
+                'product_id': subscription_data_obj.product_id,
+                'start_date': subscription_data_obj.start_date.isoformat(),
+                'expiration_date': subscription_data_obj.expiration_date.isoformat(),
+                'subscription_state': subscription_data_obj.subscription_state.value,
+                'auto_renewing': subscription_data_obj.auto_renewing,
+                'is_active': subscription_data_obj.is_active,
+                'price': {
+                    'currency_code': subscription_data_obj.price.currency_code if subscription_data_obj.price else None,
+                    'amount': subscription_data_obj.price.amount if subscription_data_obj.price else None
+                } if subscription_data_obj.price else None
+            }
+            
+            subscription_status = {
+                'is_active': subscription_status_obj.is_active,
+                'status_message': subscription_status_obj.status_message,
+                'days_until_expiry': subscription_status_obj.days_until_expiry,
+                'expiration_date': subscription_status_obj.expiration_date.isoformat()
+            }
+            
+            return subscription_data, subscription_status
+            
+        except Exception as e:
+            print(f"Erro ao verificar subscription: {str(e)}")
+            return None, None
     
-    user_model.picture = firebase_file_upload(
-        bucket_blob=os.getenv("FIREBASE_PROFILE_IMAGE_BLOB"),
-        file_image=file_picture,
-        image_id=user_id
-    )
-
-    db.add(user_model)
-    db.commit()
-
-    result = user_model.to_dict()
-    return result
+    def _update_user_account_type(self, user_model: Users, has_active_subscription: bool) -> None:
+        should_be_premium = has_active_subscription
+        current_is_premium = user_model.account_type == 1
+        
+        if should_be_premium and not current_is_premium:
+            user_model.account_type = 1
+            self.db.add(user_model)
+            self.db.commit()
+        elif not should_be_premium and current_is_premium:
+            user_model.account_type = 0
+            self.db.add(user_model)
+            self.db.commit()
+    
+    def _get_user_usage_info(self, user_model: Users) -> dict:
+        limit_service = LimitService(self.db, user_model, Flashcards, Subjects)
+        usage = limit_service.get_usage()
+        
+        return {
+            'flashcards_usage': f"{usage['flashcards'][0]}/{usage['flashcards'][1]}",
+            'ai_gen_flashcards_usage': f"{usage['ai_flashcards'][0]}/{usage['ai_flashcards'][1]}",
+            'subjects_usage': f"{usage['subjects'][0]}/{usage['subjects'][1]}"
+        }
+    
+    def retrieve_user_usecase(self, user_id: str) -> dict:
+        user_model = self._get_user_by_id(user_id)
+        subscription_model = self._get_user_subscription(user_id)
+        
+        subscription_data, subscription_status = self._verify_subscription_with_google(subscription_model)
+        
+        has_active_subscription = (
+            subscription_data is not None and 
+            subscription_status is not None and 
+            subscription_status.get('is_active', False)
+        )
+        
+        self._update_user_account_type(user_model, has_active_subscription)
+        
+        usage_info = self._get_user_usage_info(user_model)
+        
+        user_data = user_model.to_dict()
+        
+        user_data['subscription'] = {
+            'data': subscription_data,
+            'status': subscription_status,
+            'has_active_subscription': has_active_subscription
+        }
+        
+        user_data.update(usage_info)
+        
+        return user_data
+    
+    def update_user_usecase(self, user_id: str, file_picture: UploadFile) -> dict:
+        user_model = self._get_user_by_id(user_id)
+        
+        if not file_picture.content_type.startswith("image/"):
+            raise HTTPException(status_code=400, detail="the uploaded file is not an image")
+        
+        if validate_file_size(file_obj=file_picture.file, max_size_mb=5):
+            raise HTTPException(status_code=400, detail=f"the file exceeds the maximum allowed size of 5MB")
+        
+        user_model.picture = firebase_file_upload(
+            bucket_blob=os.getenv("FIREBASE_PROFILE_IMAGE_BLOB"),
+            file_image=file_picture,
+            image_id=user_id
+        )
+        
+        self.db.add(user_model)
+        self.db.commit()
+        
+        return self.retrieve_user(user_id)
