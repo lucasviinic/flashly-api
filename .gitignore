@@ -111,3 +111,6 @@ Pipfile.lock
 
 # Firebase
 flashcardforge-firebase-adminsdk.json
+
+#Play console cred
+play-console-validator.json
