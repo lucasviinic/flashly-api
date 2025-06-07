@@ -47,3 +47,31 @@ async def update_user(
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"error updating user: {str(e)}")
 
     return user_data
+
+@router.delete("/{user_id}")
+async def delete_user(user: user_dependency, db: db_dependency, user_id: str):
+    if not user:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail='authentication failed')
+
+    if user.get('id') != user_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN, 
+            detail='you can only delete your own account'
+        )
+
+    try:
+        user_usecase = UserUseCase(db)
+        result = user_usecase.delete_user_usecase(user_id=user_id)
+        
+        return {
+            'success': True,
+            'message': result['message'],
+            'deleted_at': result['deleted_at'],
+            'deleted_data_summary': result['deleted_data_count']
+        }
+        
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, 
+            detail=f"error permanently deleting user account: {str(e)}"
+        )

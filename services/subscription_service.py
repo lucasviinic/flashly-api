@@ -207,7 +207,7 @@ class SubscriptionService:
             expiration_date: datetime
         ) -> bool:
 
-        is_state_active = subscription_state == SubscriptionState.ACTIVE.value
+        is_state_active = subscription_state.value == SubscriptionState.ACTIVE.value
         is_not_expired = expiration_date > datetime.now(timezone.utc)
         
         return is_state_active and is_not_expired

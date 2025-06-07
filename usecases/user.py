@@ -1,10 +1,13 @@
+from datetime import datetime, timezone
 import os
 from fastapi import HTTPException, UploadFile
 
 from core.firebase.client import firebase_file_upload
 from database import db_dependency
 from models.flashcard_model import Flashcards
+from models.session_model import Sessions
 from models.subject_model import Subjects
+from models.topic_model import Topics
 from models.user_model import Users
 from models.subscription_model import SubscriptionModel
 from services.limit_service import LimitService
@@ -149,3 +152,54 @@ class UserUseCase:
         self.db.commit()
         
         return self.retrieve_user(user_id)
+    
+    def delete_user_usecase(self, user_id: str) -> dict:
+        user_model = self._get_user_by_id(user_id)
+        deleted_counts = {
+            'subscription': 0,
+            'sessions': 0,
+            'flashcards': 0,
+            'topics': 0,
+            'subjects': 0,
+            'user': 0
+        }
+        deletion_time = datetime.now(timezone.utc)
+        
+        sessions_count = self.db.query(Sessions).filter(
+            Sessions.user_id == user_id
+        ).delete(synchronize_session=False)
+        deleted_counts['sessions'] = sessions_count
+        
+        flashcards_count = self.db.query(Flashcards).filter(
+            Flashcards.user_id == user_id
+        ).delete(synchronize_session=False)
+        deleted_counts['flashcards'] = flashcards_count
+        
+        user_subjects = self.db.query(Subjects).filter(
+            Subjects.user_id == user_id
+        ).all()
+        
+        topics_count = 0
+        for subject in user_subjects:
+            count = self.db.query(Topics).filter(
+                Topics.subject_id == subject.id
+            ).delete(synchronize_session=False)
+            topics_count += count
+        deleted_counts['topics'] = topics_count
+        
+        subjects_count = self.db.query(Subjects).filter(
+            Subjects.user_id == user_id
+        ).delete(synchronize_session=False)
+        deleted_counts['subjects'] = subjects_count
+        
+        self.db.delete(user_model)
+        deleted_counts['user'] = 1
+        
+        self.db.commit()
+        
+        return {
+            'message': 'User account and all related data permanently deleted',
+            'deleted_at': deletion_time.isoformat(),
+            'user_id': user_id,
+            'deleted_data_count': deleted_counts
+        }
