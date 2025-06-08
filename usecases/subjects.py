@@ -62,6 +62,12 @@ class SubjectsUseCase:
         is_active = self._verify_and_update_subscription(db, subscription)
         
         return 1 if is_active else 0
+    
+    def _get_statistics(self) -> dict:
+        total_cards = ... # somatório da quantidade de flashcards em cada tópico
+        time_spend = ... # somatório do tempo nas sessões de estudo
+        return
+
 
     def retrieve_all_subjects_usecase(self, db: db_dependency, user_id: str, limit: int, offset: int, search: str) -> List[dict]:
         query = db.query(Subjects).filter(Subjects.user_id == user_id).filter(Subjects.deleted_at.is_(None))
@@ -99,6 +105,7 @@ class SubjectsUseCase:
                 "subject_name": subject.subject_name,
                 "image_url": subject.image_url,
                 "deleted_at": subject.deleted_at,
+                "statistics": self._get_statistics(),
                 "topics": topics_list
             })
 

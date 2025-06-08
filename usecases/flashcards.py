@@ -18,8 +18,10 @@ from utils.utils import fragment_text
 
 
 class FlashcardsUseCase:
-    def __init__(self, db: db_dependency):
+    def __init__(self, db: db_dependency, origin: str = 'user', user_id: str = None):
         self.db = db
+        self.origin = origin
+        self.user_id = user_id
 
     def generate_flashcards(
         self,
@@ -74,10 +76,9 @@ class FlashcardsUseCase:
     def create_flashcard(
         self,
         flashcard_request: FlashcardRequest,
-        user_id: str,
         file: UploadFile = None
     ) -> dict:
-        user = self._get_user(user_id)
+        user = self._get_user(self.user_id)
         limit_service = LimitService(self.db, user, Flashcards, Subjects)
         limit_service.check_flashcard_quota(origin='user', quantity=1)
 
@@ -87,11 +88,7 @@ class FlashcardsUseCase:
             else:
                 flashcard_data = flashcard_request.model_dump()
 
-            flashcard_model = self._create_flashcard_model(
-                user_id=user_id,
-                origin='user',
-                **flashcard_data
-            )
+            flashcard_model = self._create_flashcard_model(**flashcard_data)
 
             if file:
                 self._handle_file_upload(flashcard_model, file)
@@ -204,6 +201,10 @@ class FlashcardsUseCase:
 
     def _create_flashcard_model(self, **kwargs) -> Flashcards:
         flashcard_model = Flashcards(**kwargs)
+
+        flashcard_model.user_id = self.user_id
+        flashcard_model.origin = self.origin
+
         self.db.add(flashcard_model)
         self.db.commit()
         self.db.refresh(flashcard_model)

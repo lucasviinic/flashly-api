@@ -28,7 +28,7 @@ async def generate_flashcards(
     
     text_content = pdf_to_text(pdf=file.file)
 
-    flashcards_usecase = FlashcardsUseCase(db=db)
+    flashcards_usecase = FlashcardsUseCase(db=db, origin='ai', user_id=user.get('id'))
 
     flashcards_list = flashcards_usecase.generate_flashcards(
         content=text_content, 
@@ -55,10 +55,9 @@ async def create_flashcards(
         )
 
     try:
-        flashcards_usecase = FlashcardsUseCase(db=db)
+        flashcards_usecase = FlashcardsUseCase(db=db, user_id=user.get('id'))
         flashcard_created = flashcards_usecase.create_flashcard(
             flashcard_request=flashcard,
-            user_id=user.get('id'),
             file=file
         )
         response = flashcard_created
