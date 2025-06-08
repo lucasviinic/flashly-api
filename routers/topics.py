@@ -6,8 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from models.requests_model import TopicRequest
 from usecases.auth import get_current_user_usecase
 from database import db_dependency
-
-from usecases.topics import create_topic_usecase, delete_topic_usecase, retrieve_all_topics_usecase, retrieve_topic_usecase, update_topic_usecase
+from usecases.topics import TopicUseCase
 
 
 router = APIRouter(
@@ -22,7 +21,8 @@ async def create_topic(db: db_dependency, user: user_dependency, topic_request: 
     if not user:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail='authentication failed')
     
-    response = create_topic_usecase(db, topic_request)
+    topic_usecase = TopicUseCase(db=db)
+    response = topic_usecase.create_topic(topic_request=topic_request)
 
     return response
 
@@ -31,7 +31,8 @@ async def retrieve_all_topics(user: user_dependency, db: db_dependency, subject_
     if not user:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail='authentication failed')
     
-    response = retrieve_all_topics_usecase(db, subject_id)
+    topic_usecase = TopicUseCase(db=db, subject_id=subject_id)
+    response = topic_usecase.retrieve_all_topics()
 
     return response
 
@@ -40,7 +41,8 @@ async def update_topic(user: user_dependency, db: db_dependency, topic_request: 
     if not user:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail='authentication failed')
     
-    response = update_topic_usecase(db, topic_request)
+    topic_usecase = TopicUseCase(db=db)
+    response = topic_usecase.update_topic(topic_request=topic_request)
     
     return response
 
@@ -49,7 +51,8 @@ async def retrieve_topic(user: user_dependency, db: db_dependency, subject_id: s
     if not user:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail='authentication failed')
     
-    response = retrieve_topic_usecase(db, subject_id, topic_id)
+    topic_usecase = TopicUseCase(db=db, subject_id=subject_id, topic_id=topic_id)
+    response = topic_usecase.retrieve_topic()
 
     return response
 
@@ -58,4 +61,5 @@ async def delete_topic(user: user_dependency, db: db_dependency, topic_id: str):
     if not user:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail='authentication failed')
     
-    delete_topic_usecase(db, topic_id)
+    topic_usecase = TopicUseCase(db=db, topic_id=topic_id)
+    topic_usecase.delete_topic()
