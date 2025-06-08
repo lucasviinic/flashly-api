@@ -150,8 +150,10 @@ class UserUseCase:
         
         self.db.add(user_model)
         self.db.commit()
+
+        user_data = user_model.to_dict()
         
-        return self.retrieve_user(user_id)
+        return user_data
     
     def delete_user_usecase(self, user_id: str) -> dict:
         user_model = self._get_user_by_id(user_id)

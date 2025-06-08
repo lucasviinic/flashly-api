@@ -14,12 +14,7 @@ from utils.utils import compress_image
 
 def firebase_file_upload(bucket_blob: str, image_id: str, file_image: UploadFile) -> str:
     if not firebase_admin._apps:
-        firebase_creds = os.getenv("FIREBASE_CREDENTIALS")
-        if not firebase_creds:
-            raise ValueError("environment variable FIREBASE_CREDENTIALS not found.")
-        cred_dict = json.loads(firebase_creds)
-        cred = credentials.Certificate(cred_dict)
-        
+        cred = credentials.Certificate(os.getenv("FIREBASE_CREDENTIALS_FILE"))
         firebase_admin.initialize_app(cred, {
             'storageBucket': f"{os.getenv('FIREBASE_PROJECT_ID')}.firebasestorage.app"
         })
