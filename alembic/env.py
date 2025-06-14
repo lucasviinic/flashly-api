@@ -18,6 +18,7 @@ from models.session_flashcards_model import SessionFlashcards
 from models.session_model import Sessions
 from models.subject_model import Subjects
 from models.topic_model import Topics
+from models.survey_model import *
 # this is the Alembic Config object, which provides
 # access to the values within the .ini file in use.
 config = context.config

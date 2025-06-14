@@ -5,7 +5,18 @@ from fastapi import FastAPI, HTTPException, Request, status
 from fastapi.responses import JSONResponse
 from database import engine
 import database
-from routers import flashcards, auth, logs, subjects, subscriptions, topics, sessions, feedbacks, users
+from routers import (
+    flashcards,
+    auth,
+    logs,
+    subjects,
+    subscriptions,
+    topics,
+    sessions,
+    feedbacks,
+    users,
+    surveys
+)
 from jose import jwt, JWTError
 
 
@@ -54,3 +65,4 @@ app.include_router(feedbacks.router)
 app.include_router(users.router)
 app.include_router(logs.router)
 app.include_router(subscriptions.router)
+app.include_router(surveys.router)

@@ -1,7 +1,7 @@
 from datetime import timezone
 import uuid
 from database import Base
-from sqlalchemy import Column, Integer, String, Boolean, DateTime, func, inspect
+from sqlalchemy import Column, Enum, Integer, String, Boolean, DateTime, func, inspect
 from sqlalchemy.dialects.postgresql import UUID 
 from sqlalchemy.orm import relationship
 
@@ -16,6 +16,7 @@ class Users(Base):
     picture = Column(String, nullable=True)
     is_active = Column(Boolean, default=True)
     account_type = Column(Integer, nullable=False, default=0)
+    is_admin = Column(Boolean, default=False, nullable=False)
     refresh_token = Column(String, nullable=True)
     last_reset_date = Column(DateTime)
     credits = Column(Integer, nullable=False, default=0)
